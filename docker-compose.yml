@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  ktx-sniper:
+    build: .
+    container_name: ktx-sniper-backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - PORT=8000
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}

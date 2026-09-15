@@ -1,0 +1,7 @@
+{
+  "name": "KTX 취소표 자동 선점 시스템",
+  "description": "KTX 취소표 실시간 모니터링 및 자동 선점 엔진 관제 대시보드와 FastAPI 백엔드 개발 플랫폼",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
