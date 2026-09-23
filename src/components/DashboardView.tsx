@@ -3,7 +3,8 @@ import {
   Play, Square, RefreshCw, Zap, Bell, Shield, Clock, Train,
   CheckCircle2, AlertTriangle, Terminal as TerminalIcon,
   ChevronRight, ArrowRight, Download, Volume2, Sparkles,
-  Search, Check, Trash2, Calendar, Users, Filter, Send, ExternalLink
+  Search, Check, Trash2, Calendar, Users, Filter, Send, ExternalLink,
+  MapPin, ChevronDown
 } from 'lucide-react';
 import {
   SniperConfig, SniperStatus, LogEntry, ReservedTicket,
@@ -12,14 +13,8 @@ import {
 import { generateTrainSchedules } from '../data/mockSchedules';
 import { playSuccessChime } from '../utils/sound';
 import { KorailLoginCard, KorailUser } from './KorailLoginCard';
-
-const POPULAR_ROUTES = [
-  { dep: '서울', arr: '부산' },
-  { dep: '서울', arr: '동대구' },
-  { dep: '서울', arr: '대전' },
-  { dep: '용산', arr: '광주송정' },
-  { dep: '서울', arr: '강릉' },
-];
+import { StationSelectorModal } from './StationSelectorModal';
+import { POPULAR_ROUTES, ALL_STATIONS } from '../data/korailStations';
 
 interface DashboardViewProps {
   isRunning: boolean;
@@ -62,6 +57,9 @@ export function DashboardView({
   });
   const [baseTime, setBaseTime] = useState('080000');
   const [passengers, setPassengers] = useState(1);
+
+  // Station modal state
+  const [stationModalTarget, setStationModalTarget] = useState<'DEP' | 'ARR' | null>(null);
 
   // Schedules state
   const [schedules, setSchedules] = useState<TrainScheduleItem[]>(() =>
@@ -166,7 +164,6 @@ export function DashboardView({
         setSchedules(mapped);
         setIsRealData(true);
 
-        // Auto-update default targets to the first 2 fetched trains
         if (mapped.length >= 2) {
           setTargets([
             {
@@ -210,6 +207,16 @@ export function DashboardView({
     setDepartureStation(arrivalStation);
     setArrivalStation(temp);
     fetchRealSchedules(arrivalStation, temp, date, baseTime, passengers);
+  };
+
+  const handleStationModalSelect = (stationName: string) => {
+    if (stationModalTarget === 'DEP') {
+      setDepartureStation(stationName);
+      fetchRealSchedules(stationName, arrivalStation, date, baseTime, passengers);
+    } else if (stationModalTarget === 'ARR') {
+      setArrivalStation(stationName);
+      fetchRealSchedules(departureStation, stationName, date, baseTime, passengers);
+    }
   };
 
   // Toggle seat selection for a specific train
@@ -335,6 +342,16 @@ export function DashboardView({
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      {/* Station Selector Modal */}
+      <StationSelectorModal
+        isOpen={stationModalTarget !== null}
+        onClose={() => setStationModalTarget(null)}
+        title={stationModalTarget === 'DEP' ? '출발역 선택' : '도착역 선택'}
+        currentStation={stationModalTarget === 'DEP' ? departureStation : arrivalStation}
+        oppositeStation={stationModalTarget === 'DEP' ? arrivalStation : departureStation}
+        onSelectStation={handleStationModalSelect}
+      />
+
       {/* 10-Minute Golden Time Banner on Success */}
       {status === 'SUCCESS' && reservedTicket && (
         <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-600 text-white p-5 rounded-2xl shadow-xl border border-emerald-400/30 animate-in fade-in slide-in-from-top-4 duration-300">
@@ -398,7 +415,7 @@ export function DashboardView({
         isRunning={isRunning}
       />
 
-      {/* STEP 2: Live Korail Train Schedule Search & Selection */}
+      {/* STEP 2: Live Korail Train Schedule Search & Selection with All Stations Picker */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div className="flex items-center space-x-2.5">
@@ -407,7 +424,10 @@ export function DashboardView({
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h2 className="font-bold text-slate-900 text-base">코레일 실시간 운행 시간표 조회</h2>
+                <h2 className="font-bold text-slate-900 text-base">전국 역 운행 시간표 조회</h2>
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200/80">
+                  전국 {ALL_STATIONS.length}개 전 역 지원
+                </span>
                 {isRealData ? (
                   <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center space-x-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -419,14 +439,35 @@ export function DashboardView({
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">출발역, 도착역, 날짜를 입력하여 현재 KTX 잔여석 및 매진 상태를 실시간 확인합니다.</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                출발역과 도착역을 클릭하여 전국 모든 역(KTX, ITX, 새마을, 무궁화호)을 검색하거나 직접 입력할 수 있습니다.
+              </p>
             </div>
           </div>
 
-          {/* Quick Route Buttons */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs text-slate-400 font-medium mr-1">주요 노선:</span>
-            {POPULAR_ROUTES.map((route) => (
+          {/* Quick Route Selector & All Stations Explorer */}
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            <button
+              type="button"
+              disabled={isRunning}
+              onClick={() => setStationModalTarget('DEP')}
+              className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold transition-colors flex items-center space-x-1.5 shadow-2xs"
+            >
+              <MapPin className="w-3.5 h-3.5 text-blue-600" />
+              <span>전국 모든 역 탐색 ({ALL_STATIONS.length}개)</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Popular Route Chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs text-slate-600">
+          <span className="text-slate-400 font-semibold shrink-0 mr-1 flex items-center space-x-1">
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+            <span>추천 노선:</span>
+          </span>
+          {POPULAR_ROUTES.map((route) => {
+            const isMatch = departureStation === route.dep && arrivalStation === route.arr;
+            return (
               <button
                 key={`${route.dep}-${route.arr}`}
                 type="button"
@@ -436,58 +477,107 @@ export function DashboardView({
                   setArrivalStation(route.arr);
                   fetchRealSchedules(route.dep, route.arr, date, baseTime, passengers);
                 }}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${
-                  departureStation === route.dep && arrivalStation === route.arr
+                className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
+                  isMatch
                     ? 'bg-blue-600 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                 }`}
               >
                 {route.dep} ↔ {route.arr}
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
 
         {/* Search Controls Form */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 items-end">
-          {/* Departure Station */}
-          <div>
-            <label className="text-xs font-semibold text-slate-600 block mb-1">출발역</label>
-            <input
-              id="input-dep-station"
-              type="text"
-              value={departureStation}
-              disabled={isRunning}
-              onChange={(e) => setDepartureStation(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 bg-slate-50/70 focus:outline-blue-600"
-            />
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-3 items-end">
+          {/* Departure Station Card */}
+          <div className="md:col-span-3">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold text-slate-700 flex items-center space-x-1">
+                <MapPin className="w-3.5 h-3.5 text-blue-600" />
+                <span>출발역</span>
+              </label>
+              <button
+                type="button"
+                disabled={isRunning}
+                onClick={() => setStationModalTarget('DEP')}
+                className="text-[11px] font-bold text-blue-600 hover:text-blue-800"
+              >
+                모든 역 보기
+              </button>
+            </div>
+            <div className="relative flex items-center">
+              <input
+                id="input-dep-station"
+                type="text"
+                value={departureStation}
+                disabled={isRunning}
+                onChange={(e) => setDepartureStation(e.target.value)}
+                className="w-full px-3.5 py-2.5 pr-9 border border-slate-200 rounded-xl text-base font-bold text-slate-900 bg-slate-50/70 focus:outline-blue-600 focus:bg-white"
+              />
+              <button
+                type="button"
+                disabled={isRunning}
+                onClick={() => setStationModalTarget('DEP')}
+                className="absolute right-2 p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-slate-100"
+                title="출발역 검색창 열기"
+              >
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
-          {/* Swap & Arrival Station */}
-          <div className="relative">
+          {/* Swap Button & Arrival Station Card */}
+          <div className="md:col-span-3 relative">
             <button
               id="btn-swap-stations"
               type="button"
               onClick={handleStationSwap}
               disabled={isRunning}
-              className="absolute -left-3 top-7 z-10 w-7 h-7 rounded-full border border-slate-200 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-600 shadow-xs transition-colors"
-              title="출발/도착역 맞바꾸기"
+              className="hidden md:flex absolute -left-4 top-8 z-10 w-8 h-8 rounded-full border border-slate-200 bg-white hover:bg-slate-100 items-center justify-center text-slate-600 shadow-xs transition-colors"
+              title="출발역과 도착역 맞바꾸기"
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
-            <label className="text-xs font-semibold text-slate-600 block mb-1">도착역</label>
-            <input
-              id="input-arr-station"
-              type="text"
-              value={arrivalStation}
-              disabled={isRunning}
-              onChange={(e) => setArrivalStation(e.target.value)}
-              className="w-full px-3 py-2 pl-5 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 bg-slate-50/70 focus:outline-blue-600"
-            />
+
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold text-slate-700 flex items-center space-x-1">
+                <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                <span>도착역</span>
+              </label>
+              <button
+                type="button"
+                disabled={isRunning}
+                onClick={() => setStationModalTarget('ARR')}
+                className="text-[11px] font-bold text-emerald-600 hover:text-emerald-800"
+              >
+                모든 역 보기
+              </button>
+            </div>
+            <div className="relative flex items-center">
+              <input
+                id="input-arr-station"
+                type="text"
+                value={arrivalStation}
+                disabled={isRunning}
+                onChange={(e) => setArrivalStation(e.target.value)}
+                className="w-full px-3.5 py-2.5 pr-9 border border-slate-200 rounded-xl text-base font-bold text-slate-900 bg-slate-50/70 focus:outline-emerald-600 focus:bg-white"
+              />
+              <button
+                type="button"
+                disabled={isRunning}
+                onClick={() => setStationModalTarget('ARR')}
+                className="absolute right-2 p-1.5 text-slate-400 hover:text-emerald-600 rounded-lg hover:bg-slate-100"
+                title="도착역 검색창 열기"
+              >
+                <ChevronDown className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           {/* Date */}
-          <div>
+          <div className="md:col-span-2">
             <label className="text-xs font-semibold text-slate-600 block mb-1">출발일자 (YYYYMMDD)</label>
             <div className="relative">
               <input
@@ -497,20 +587,20 @@ export function DashboardView({
                 disabled={isRunning}
                 onChange={(e) => setDate(e.target.value)}
                 placeholder="예: 20260909"
-                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono text-slate-900 bg-slate-50/70 focus:outline-blue-600"
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-mono text-slate-900 bg-slate-50/70 focus:outline-blue-600"
               />
             </div>
           </div>
 
           {/* Departure Time */}
-          <div>
+          <div className="md:col-span-2">
             <label className="text-xs font-semibold text-slate-600 block mb-1">출발 기준 시간</label>
             <select
               id="select-base-time"
               value={baseTime}
               disabled={isRunning}
               onChange={(e) => setBaseTime(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-medium text-slate-900 bg-slate-50/70 focus:outline-blue-600"
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-900 bg-slate-50/70 focus:outline-blue-600"
             >
               <option value="060000">06:00 이후</option>
               <option value="070000">07:00 이후</option>
@@ -526,7 +616,7 @@ export function DashboardView({
           </div>
 
           {/* Search Button */}
-          <div>
+          <div className="md:col-span-2">
             <button
               id="btn-search-schedules"
               type="button"
@@ -535,7 +625,7 @@ export function DashboardView({
               className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm flex items-center justify-center space-x-2 shadow-xs transition-colors disabled:opacity-60"
             >
               <Search className={`w-4 h-4 ${isSearching ? 'animate-spin' : ''}`} />
-              <span>{isSearching ? '코레일 조회 중...' : '실시간 시간표 조회'}</span>
+              <span>{isSearching ? '조회 중...' : '시간표 조회'}</span>
             </button>
           </div>
         </div>
@@ -550,7 +640,7 @@ export function DashboardView({
               <div className="flex items-center space-x-2">
                 <h3 className="font-bold text-slate-900 text-base">열차별 좌석 선점 타겟 지정</h3>
                 <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold">
-                  총 {filteredSchedules.length}편 운행
+                  총 {filteredSchedules.length}편 운행 ({departureStation} ➔ {arrivalStation})
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -581,128 +671,136 @@ export function DashboardView({
 
         {/* Schedule List */}
         <div className="divide-y divide-slate-100">
-          {filteredSchedules.map((train) => {
-            const target = getTargetForTrain(train.trainNumber);
-            const isTargeted = !!target;
+          {filteredSchedules.length === 0 ? (
+            <div className="py-12 text-center text-slate-500">
+              <Train className="w-8 h-8 mx-auto text-slate-400 mb-2 opacity-60" />
+              <p className="text-sm font-semibold text-slate-700">해당 구간에 조회된 직통 열차가 없습니다.</p>
+              <p className="text-xs text-slate-400 mt-1">출발역, 도착역, 또는 출발일자/시간을 다시 확인해주세요.</p>
+            </div>
+          ) : (
+            filteredSchedules.map((train) => {
+              const target = getTargetForTrain(train.trainNumber);
+              const isTargeted = !!target;
 
-            return (
-              <div
-                key={train.trainNumber}
-                className={`p-4 sm:px-6 transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${
-                  isTargeted ? 'bg-blue-50/50' : 'hover:bg-slate-50/70'
-                }`}
-              >
-                {/* Train Info Column */}
-                <div className="flex items-start sm:items-center space-x-4">
-                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-                    train.trainType.includes('산천')
-                      ? 'bg-purple-100 text-purple-700'
-                      : train.trainType.includes('청룡')
-                      ? 'bg-teal-100 text-teal-700'
-                      : 'bg-blue-100 text-blue-700'
-                  }`}>
-                    <Train className="w-5 h-5" />
+              return (
+                <div
+                  key={train.trainNumber}
+                  className={`p-4 sm:px-6 transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${
+                    isTargeted ? 'bg-blue-50/50' : 'hover:bg-slate-50/70'
+                  }`}
+                >
+                  {/* Train Info Column */}
+                  <div className="flex items-start sm:items-center space-x-4">
+                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+                      train.trainType.includes('산천')
+                        ? 'bg-purple-100 text-purple-700'
+                        : train.trainType.includes('청룡')
+                        ? 'bg-teal-100 text-teal-700'
+                        : 'bg-blue-100 text-blue-700'
+                    }`}>
+                      <Train className="w-5 h-5" />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-slate-900 text-sm">{train.trainType}</span>
+                        <span className="px-2 py-0.5 rounded bg-slate-100 font-mono text-xs font-bold text-slate-700">
+                          {train.trainNumber}호
+                        </span>
+                        <span className="text-xs text-slate-400 font-medium">({train.duration})</span>
+                      </div>
+
+                      <div className="flex items-center space-x-2 mt-1">
+                        <span className="font-mono text-base font-black text-slate-900">{train.departureTime}</span>
+                        <span className="text-xs text-slate-500 font-medium">{train.departureStation}</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                        <span className="font-mono text-base font-black text-slate-900">{train.arrivalTime}</span>
+                        <span className="text-xs text-slate-500 font-medium">{train.arrivalStation}</span>
+                      </div>
+                    </div>
                   </div>
 
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <span className="font-bold text-slate-900 text-sm">{train.trainType}</span>
-                      <span className="px-2 py-0.5 rounded bg-slate-100 font-mono text-xs font-bold text-slate-700">
-                        {train.trainNumber}호
+                  {/* Seat Selector Buttons */}
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {/* General Seat Button */}
+                    <button
+                      id={`btn-target-normal-${train.trainNumber}`}
+                      type="button"
+                      disabled={isRunning}
+                      onClick={() => handleToggleSeat(train, 'NORMAL')}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all border flex items-center space-x-1.5 ${
+                        isTargetSelected(train.trainNumber, 'NORMAL')
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span>일반실</span>
+                      <span className="text-[10px] opacity-80">({train.generalPrice.toLocaleString()}원)</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        train.generalSeatStatus === 'AVAILABLE'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-rose-100 text-rose-700'
+                      }`}>
+                        {train.generalSeatStatus === 'AVAILABLE' ? '예약가능' : '매진'}
                       </span>
-                      <span className="text-xs text-slate-400 font-medium">({train.duration})</span>
-                    </div>
+                    </button>
 
-                    <div className="flex items-center space-x-2 mt-1">
-                      <span className="font-mono text-base font-black text-slate-900">{train.departureTime}</span>
-                      <span className="text-xs text-slate-500 font-medium">{train.departureStation}</span>
-                      <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-                      <span className="font-mono text-base font-black text-slate-900">{train.arrivalTime}</span>
-                      <span className="text-xs text-slate-500 font-medium">{train.arrivalStation}</span>
-                    </div>
+                    {/* Special Seat Button */}
+                    <button
+                      id={`btn-target-special-${train.trainNumber}`}
+                      type="button"
+                      disabled={isRunning}
+                      onClick={() => handleToggleSeat(train, 'SPECIAL')}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all border flex items-center space-x-1.5 ${
+                        isTargetSelected(train.trainNumber, 'SPECIAL')
+                          ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span>특실</span>
+                      <span className="text-[10px] opacity-80">({train.specialPrice.toLocaleString()}원)</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        train.specialSeatStatus === 'AVAILABLE'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-rose-100 text-rose-700'
+                      }`}>
+                        {train.specialSeatStatus === 'AVAILABLE' ? '예약가능' : '매진'}
+                      </span>
+                    </button>
+
+                    {/* Any Seat Button */}
+                    <button
+                      id={`btn-target-any-${train.trainNumber}`}
+                      type="button"
+                      disabled={isRunning}
+                      onClick={() => handleToggleSeat(train, 'ANY')}
+                      className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all border ${
+                        isTargetSelected(train.trainNumber, 'ANY')
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {isTargetSelected(train.trainNumber, 'ANY') ? '✓ 일반/특실 모두 감시' : '둘 다 상관없음'}
+                    </button>
+
+                    {/* Status Indicator if targeted */}
+                    {isTargeted && (
+                      <div className="flex items-center space-x-1 text-blue-700 text-xs font-bold pl-1">
+                        <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                        <span>
+                          {target.seatPreference === 'NORMAL'
+                            ? '일반실 타겟'
+                            : target.seatPreference === 'SPECIAL'
+                            ? '특실 타겟'
+                            : '일반/특실 모두 타겟'}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
-
-                {/* Seat Selector Buttons */}
-                <div className="flex flex-wrap items-center gap-2.5">
-                  {/* General Seat Button */}
-                  <button
-                    id={`btn-target-normal-${train.trainNumber}`}
-                    type="button"
-                    disabled={isRunning}
-                    onClick={() => handleToggleSeat(train, 'NORMAL')}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all border flex items-center space-x-1.5 ${
-                      isTargetSelected(train.trainNumber, 'NORMAL')
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>일반실</span>
-                    <span className="text-[10px] opacity-80">({train.generalPrice.toLocaleString()}원)</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                      train.generalSeatStatus === 'AVAILABLE'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-rose-100 text-rose-700'
-                    }`}>
-                      {train.generalSeatStatus === 'AVAILABLE' ? '예약가능' : '매진'}
-                    </span>
-                  </button>
-
-                  {/* Special Seat Button */}
-                  <button
-                    id={`btn-target-special-${train.trainNumber}`}
-                    type="button"
-                    disabled={isRunning}
-                    onClick={() => handleToggleSeat(train, 'SPECIAL')}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all border flex items-center space-x-1.5 ${
-                      isTargetSelected(train.trainNumber, 'SPECIAL')
-                        ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
-                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>특실</span>
-                    <span className="text-[10px] opacity-80">({train.specialPrice.toLocaleString()}원)</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                      train.specialSeatStatus === 'AVAILABLE'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-rose-100 text-rose-700'
-                    }`}>
-                      {train.specialSeatStatus === 'AVAILABLE' ? '예약가능' : '매진'}
-                    </span>
-                  </button>
-
-                  {/* Any Seat Button */}
-                  <button
-                    id={`btn-target-any-${train.trainNumber}`}
-                    type="button"
-                    disabled={isRunning}
-                    onClick={() => handleToggleSeat(train, 'ANY')}
-                    className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all border ${
-                      isTargetSelected(train.trainNumber, 'ANY')
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    {isTargetSelected(train.trainNumber, 'ANY') ? '✓ 일반/특실 모두 감시' : '둘 다 상관없음'}
-                  </button>
-
-                  {/* Status Indicator if targeted */}
-                  {isTargeted && (
-                    <div className="flex items-center space-x-1 text-blue-700 text-xs font-bold pl-1">
-                      <CheckCircle2 className="w-4 h-4 text-blue-600" />
-                      <span>
-                        {target.seatPreference === 'NORMAL'
-                          ? '일반실 타겟'
-                          : target.seatPreference === 'SPECIAL'
-                          ? '특실 타겟'
-                          : '일반/특실 모두 타겟'}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 
