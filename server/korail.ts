@@ -439,11 +439,10 @@ export class KorailService {
     passengers = 1
   ): Promise<{
     success: boolean;
-    pnrNo?: string;
-    seatInfo?: string;
-    price?: number;
-    limitDate?: string;
-    limitTime?: string;
+    pnrNo: string | null;
+    seatInfo: string | null;
+    price: number | null;
+    paymentDeadline: string | null;
     message?: string;
   }> {
     const { headers, sid } = generateAuthHeadersAndSid(this.device);
@@ -498,22 +497,43 @@ export class KorailService {
     const json = await res.json() as any;
 
     if (json?.strResult === 'SUCC') {
-      const pnrNo = json.h_pnr_no;
-      const seatInfo = `${isSpecial ? '특실' : '일반실'} ${json.h_srcar_no || '4'}호차 ${json.h_seat_no || '9A'}`;
-      const price = parseInt(json.h_rsv_amt || '59800', 10);
+      // 응답에 없는 값은 추정하지 않고 null로 돌려준다.
+      const pnrNo = json.h_pnr_no ? String(json.h_pnr_no) : null;
+      const seatInfo =
+        json.h_srcar_no && json.h_seat_no
+          ? `${isSpecial ? '특실' : '일반실'} ${json.h_srcar_no}호차 ${json.h_seat_no}`
+          : null;
+      const parsedPrice = parseInt(json.h_rsv_amt, 10);
       return {
         success: true,
         pnrNo,
         seatInfo,
-        price,
-        limitDate: json.h_ntisu_lmt_dt,
-        limitTime: json.h_ntisu_lmt_tm,
+        price: Number.isFinite(parsedPrice) ? parsedPrice : null,
+        paymentDeadline: parseKstDateTime(json.h_ntisu_lmt_dt, json.h_ntisu_lmt_tm),
       };
     }
 
     return {
       success: false,
+      pnrNo: null,
+      seatInfo: null,
+      price: null,
+      paymentDeadline: null,
       message: json?.h_msg_txt || '좌석 선점에 실패하였습니다.',
     };
   }
+}
+
+/**
+ * 코레일 응답의 날짜(YYYYMMDD)·시각(HHMMSS, KST)을 ISO 문자열로 변환한다. 형식이 맞지 않으면 null.
+ */
+export function parseKstDateTime(date: unknown, time: unknown): string | null {
+  const d = String(date ?? '');
+  const t = String(time ?? '');
+  if (!/^\d{8}$/.test(d) || !/^\d{4}(\d{2})?$/.test(t)) return null;
+  const ss = t.length === 6 ? t.slice(4, 6) : '00';
+  const parsed = new Date(
+    `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${t.slice(0, 2)}:${t.slice(2, 4)}:${ss}+09:00`
+  );
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }

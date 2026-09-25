@@ -1,3 +1,0 @@
-"""
-KTX Sniper Backend Package
-"""

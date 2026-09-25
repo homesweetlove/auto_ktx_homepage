@@ -3,6 +3,7 @@ import {
   ShieldCheck, Lock, User, KeyRound, Eye, EyeOff,
   CheckCircle2, AlertCircle, RefreshCw, LogOut, Sparkles, HelpCircle
 } from 'lucide-react';
+import { postJson } from '../utils/api';
 
 export interface KorailUser {
   isLoggedIn: boolean;
@@ -15,7 +16,7 @@ export interface KorailUser {
 
 interface KorailLoginCardProps {
   user: KorailUser | null;
-  onLoginSuccess: (user: KorailUser, password?: string) => void;
+  onLoginSuccess: (user: KorailUser) => void;
   onLogout: () => void;
   isRunning: boolean;
 }
@@ -48,13 +49,9 @@ export function KorailLoginCard({
     setErrorMessage(null);
 
     try {
-      const res = await fetch('/api/korail/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          membershipNumber: idInput.trim(),
-          password: passwordInput,
-        }),
+      const res = await postJson('/api/korail/login', {
+        membershipNumber: idInput.trim(),
+        password: passwordInput,
       });
 
       const data = await res.json();
@@ -68,7 +65,8 @@ export function KorailLoginCard({
           email: data.email || '',
           isDemo: false,
         };
-        onLoginSuccess(loggedInUser, passwordInput);
+        onLoginSuccess(loggedInUser);
+        setPasswordInput('');
         setErrorMessage(null);
       } else {
         setErrorMessage(data.message || '로그인에 실패하였습니다. 회원번호와 비밀번호를 확인해주세요.');
@@ -89,7 +87,7 @@ export function KorailLoginCard({
       email: 'demo@korail.com',
       isDemo: true,
     };
-    onLoginSuccess(demoUser, 'demoPass1234');
+    onLoginSuccess(demoUser);
     setErrorMessage(null);
   };
 
@@ -133,6 +131,7 @@ export function KorailLoginCard({
           </p>
           <ul className="list-disc list-inside space-y-0.5 text-slate-700 pl-1">
             <li>비밀번호는 코레일 공식 암호화 키(<code className="font-mono bg-white px-1 py-0.5 rounded">app.login.cphd</code>)로 메모리 상에서 AES-256-CBC 암호화된 후 코레일 서버로 직접 전송됩니다.</li>
+            <li>로그인에 성공한 계정 정보는 감시 재로그인을 위해 <strong>이 서버의 메모리에만</strong> 보관되며, 브라우저에는 저장되지 않습니다. 로그아웃하거나 서버를 재시작하면 삭제됩니다.</li>
             <li>선점 완료 시 사용자가 스마트폰 코레일톡 앱으로 결제할 수 있도록 백엔드 세션은 <strong>즉시 자동 로그아웃</strong>되어 중복 접속 오류가 발생하지 않습니다.</li>
           </ul>
         </div>

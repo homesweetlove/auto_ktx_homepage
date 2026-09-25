@@ -5,15 +5,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { DashboardView } from './components/DashboardView';
-import { CodeViewer } from './components/CodeViewer';
-import { PlanView } from './components/PlanView';
-import { AndroidView } from './components/AndroidView';
-import { SniperConfig, SniperStatus, LogEntry, ReservedTicket, TargetTrain } from './types/sniper';
+import {
+  SniperConfig, SniperStatus, LogEntry, ReservedTicket, TargetTrain,
+  SniperStartRequest, SniperStatusResponse, KorailSessionResponse,
+} from './types/sniper';
 import { playSuccessChime } from './utils/sound';
+import { apiFetch, postJson } from './utils/api';
 import { KorailUser } from './components/KorailLoginCard';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'code' | 'plan' | 'android'>('dashboard');
   const [status, setStatus] = useState<SniperStatus>('IDLE');
   const [isRunning, setIsRunning] = useState(false);
   const [pollCount, setPollCount] = useState(0);
@@ -32,7 +32,6 @@ export default function App() {
     }
     return null;
   });
-  const [userPassword, setUserPassword] = useState<string>('');
 
   const statusPollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -58,8 +57,9 @@ export default function App() {
   // Sync state from server /api/sniper/status
   const syncServerStatus = async () => {
     try {
-      const res = await fetch('/api/sniper/status');
-      const data = await res.json();
+      const res = await apiFetch('/api/sniper/status');
+      if (!res.ok) return;
+      const data: SniperStatusResponse = await res.json();
       if (data) {
         setStatus(data.status);
         setIsRunning(data.isRunning);
@@ -78,6 +78,30 @@ export default function App() {
       // Fallback: server may be temporarily busy
     }
   };
+
+  // 새로고침 후 서버에 계정 정보가 없으면 (서버 재시작 등) 저장된 로그인 표시를 해제
+  useEffect(() => {
+    syncServerStatus();
+    if (!user || user.isDemo) return;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/korail/session');
+        if (!res.ok) return;
+        const session: KorailSessionResponse = await res.json();
+        if (!session.loggedIn) {
+          setUser(null);
+          try {
+            localStorage.removeItem('ktx_sniper_user');
+          } catch (e) {
+            // ignore
+          }
+          addLog('WARN', 'SECURITY', '서버에 저장된 코레일 로그인 정보가 없어 다시 로그인이 필요합니다.');
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, []);
 
   // Polling loop while sniper is active
   useEffect(() => {
@@ -101,9 +125,8 @@ export default function App() {
   }, [isRunning]);
 
   // Login handler
-  const handleLoginSuccess = (loggedInUser: KorailUser, password?: string) => {
+  const handleLoginSuccess = (loggedInUser: KorailUser) => {
     setUser(loggedInUser);
-    if (password) setUserPassword(password);
     try {
       localStorage.setItem('ktx_sniper_user', JSON.stringify(loggedInUser));
     } catch (e) {
@@ -121,8 +144,14 @@ export default function App() {
     if (isRunning) {
       await handleStop();
     }
+    if (!user?.isDemo) {
+      try {
+        await postJson('/api/korail/logout');
+      } catch (e) {
+        // ignore
+      }
+    }
     setUser(null);
-    setUserPassword('');
     try {
       localStorage.removeItem('ktx_sniper_user');
     } catch (e) {
@@ -140,7 +169,7 @@ export default function App() {
     setPollCount(0);
     setReservedTicket(null);
 
-    const payload = {
+    const payload: SniperStartRequest = {
       departureStation: config.departureStation,
       arrivalStation: config.arrivalStation,
       date: config.date,
@@ -149,19 +178,13 @@ export default function App() {
       targets: config.targets,
       minJitter: config.minJitter,
       maxJitter: config.maxJitter,
-      membershipNumber: user?.membershipNumber || config.membershipNumber,
-      password: userPassword || config.password,
       telegramBotToken: config.telegramBotToken,
       telegramChatId: config.telegramChatId,
       isSimulationMode: user?.isDemo ?? false,
     };
 
     try {
-      const res = await fetch('/api/sniper/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const res = await postJson('/api/sniper/start', payload);
       const data = await res.json();
       if (!data.success) {
         setStatus('ERROR');
@@ -181,7 +204,7 @@ export default function App() {
   // Stop Monitoring Engine
   const handleStop = async () => {
     try {
-      await fetch('/api/sniper/stop', { method: 'POST' });
+      await postJson('/api/sniper/stop');
     } catch (e) {
       // ignore
     }
@@ -193,11 +216,7 @@ export default function App() {
   // Trigger Mock Reservation Success on a specific target
   const handleTriggerMockSuccess = async (targetTrain?: TargetTrain) => {
     try {
-      const res = await fetch('/api/sniper/mock-trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetTrain }),
-      });
+      const res = await postJson('/api/sniper/mock-trigger', { targetTrain });
       const data = await res.json();
       if (data?.ticket) {
         setReservedTicket(data.ticket);
@@ -213,37 +232,24 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        isRunning={isRunning}
-        status={status}
-      />
+      <Navbar isRunning={isRunning} status={status} />
 
       <main className="flex-1">
-        {activeTab === 'dashboard' && (
-          <DashboardView
-            isRunning={isRunning}
-            status={status}
-            onStart={handleStart}
-            onStop={handleStop}
-            onTriggerMockSuccess={handleTriggerMockSuccess}
-            logs={logs}
-            reservedTicket={reservedTicket}
-            pollCount={pollCount}
-            lastLatencyMs={lastLatencyMs}
-            currentJitter={currentJitter}
-            user={user}
-            onLoginSuccess={handleLoginSuccess}
-            onLogout={handleLogout}
-          />
-        )}
-
-        {activeTab === 'code' && <CodeViewer />}
-
-        {activeTab === 'plan' && <PlanView />}
-
-        {activeTab === 'android' && <AndroidView />}
+        <DashboardView
+          isRunning={isRunning}
+          status={status}
+          onStart={handleStart}
+          onStop={handleStop}
+          onTriggerMockSuccess={handleTriggerMockSuccess}
+          logs={logs}
+          reservedTicket={reservedTicket}
+          pollCount={pollCount}
+          lastLatencyMs={lastLatencyMs}
+          currentJitter={currentJitter}
+          user={user}
+          onLoginSuccess={handleLoginSuccess}
+          onLogout={handleLogout}
+        />
       </main>
 
       <footer className="border-t border-slate-200 bg-white py-4 mt-8">
@@ -251,10 +257,10 @@ export default function App() {
           <div className="flex items-center space-x-2">
             <span className="font-semibold text-slate-700">나만의 KTX 취소표 자동 선점 시스템 (개인용)</span>
             <span>&middot;</span>
-            <span>FastAPI + Node Engine + Korail Mobile API + Telegram</span>
+            <span>Node + React + Telegram</span>
           </div>
           <div>
-            <span>본 시스템은 코레일 취소표 실시간 감시 및 10분 골든타임 결제 지원 개인용 자동화 플랫폼입니다.</span>
+            <span>코레일 공식 서비스가 아닌 개인용 프로젝트입니다.</span>
           </div>
         </div>
       </footer>

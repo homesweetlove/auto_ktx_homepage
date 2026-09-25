@@ -1,26 +1,17 @@
-FROM python:3.11-slim as builder
-
+FROM node:22-slim AS build
 WORKDIR /app
+COPY package.json bun.lock ./
+RUN npm install -g bun && bun install --frozen-lockfile
+COPY . .
+RUN bun run build
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc build-essential && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-FROM python:3.11-slim
-
+FROM node:22-slim
 WORKDIR /app
-RUN useradd -m -u 1000 sniperuser
+ENV NODE_ENV=production
+COPY package.json bun.lock ./
+RUN npm install -g bun && bun install --frozen-lockfile --production && npm uninstall -g bun
+COPY --from=build /app/dist ./dist
 
-COPY --from=builder /root/.local /home/sniperuser/.local
-COPY app/ /app/app/
-
-ENV PATH=/home/sniperuser/.local/bin:$PATH
-ENV PYTHONUNBUFFERED=1
-ENV ENVIRONMENT=production
-
-USER sniperuser
-EXPOSE 8000
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+USER node
+EXPOSE 3000
+CMD ["node", "dist/server.cjs"]

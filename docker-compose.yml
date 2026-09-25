@@ -1,14 +1,14 @@
-version: '3.8'
-
 services:
   ktx-sniper:
     build: .
-    container_name: ktx-sniper-backend
-    restart: always
+    container_name: ktx-sniper
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      # 호스트의 로컬 주소에만 노출. 외부 공개가 필요하면 리버스 프록시(HTTPS) 뒤에 두세요.
+      - "127.0.0.1:3000:3000"
     environment:
-      - ENVIRONMENT=production
-      - PORT=8000
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - HOST=0.0.0.0
+      - PORT=3000
+      - ADMIN_TOKEN=${ADMIN_TOKEN:?ADMIN_TOKEN을 .env에 설정하세요}
+      - KORAIL_ID=${KORAIL_ID:-}
+      - KORAIL_PASSWORD=${KORAIL_PASSWORD:-}

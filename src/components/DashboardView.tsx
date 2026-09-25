@@ -12,6 +12,7 @@ import {
 } from '../types/sniper';
 import { generateTrainSchedules } from '../data/mockSchedules';
 import { playSuccessChime } from '../utils/sound';
+import { postJson } from '../utils/api';
 import { KorailLoginCard, KorailUser } from './KorailLoginCard';
 import { StationSelectorModal } from './StationSelectorModal';
 import { POPULAR_ROUTES, ALL_STATIONS } from '../data/korailStations';
@@ -28,7 +29,7 @@ interface DashboardViewProps {
   lastLatencyMs: number;
   currentJitter: number;
   user: KorailUser | null;
-  onLoginSuccess: (user: KorailUser, password?: string) => void;
+  onLoginSuccess: (user: KorailUser) => void;
   onLogout: () => void;
 }
 
@@ -95,7 +96,7 @@ export function DashboardView({
   const [isTestingTelegram, setIsTestingTelegram] = useState(false);
 
   // UI state
-  const [deadlineSeconds, setDeadlineSeconds] = useState<number>(600);
+  const [deadlineSeconds, setDeadlineSeconds] = useState<number | null>(null);
   const [logFilter, setLogFilter] = useState<'ALL' | 'SUCCESS' | 'KORAIL' | 'TELEGRAM'>('ALL');
   const [trainTypeFilter, setTrainTypeFilter] = useState<'ALL' | 'KTX' | 'KTX-산천' | 'KTX-청룡'>('ALL');
   const logContainerRef = useRef<HTMLDivElement>(null);
@@ -105,13 +106,18 @@ export function DashboardView({
     fetchRealSchedules(departureStation, arrivalStation, date, baseTime, passengers);
   }, []);
 
-  // 10-Minute Golden Time Countdown
+  // Payment deadline countdown (only when Korail returned a deadline)
   useEffect(() => {
-    if (!reservedTicket) return;
+    const deadline = reservedTicket?.paymentDeadline;
+    if (!deadline) {
+      setDeadlineSeconds(null);
+      return;
+    }
+    const end = new Date(deadline).getTime();
+    const tick = () => Math.max(0, Math.floor((end - Date.now()) / 1000));
+    setDeadlineSeconds(tick());
     const interval = setInterval(() => {
-      const now = new Date().getTime();
-      const end = new Date(reservedTicket.paymentDeadline).getTime();
-      const diff = Math.max(0, Math.floor((end - now) / 1000));
+      const diff = tick();
       setDeadlineSeconds(diff);
       if (diff <= 0) clearInterval(interval);
     }, 1000);
@@ -135,16 +141,12 @@ export function DashboardView({
   ) => {
     setIsSearching(true);
     try {
-      const res = await fetch('/api/korail/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          departureStation: dep,
-          arrivalStation: arr,
-          date: queryDate,
-          time: queryTime,
-          passengers: psgCount,
-        }),
+      const res = await postJson('/api/korail/search', {
+        departureStation: dep,
+        arrivalStation: arr,
+        date: queryDate,
+        time: queryTime,
+        passengers: psgCount,
       });
       const data = await res.json();
       if (data.success && Array.isArray(data.schedules) && data.schedules.length > 0) {
@@ -267,13 +269,9 @@ export function DashboardView({
     setIsTestingTelegram(true);
     setTelegramTestStatus(null);
     try {
-      const res = await fetch('/api/telegram/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          botToken: telegramToken,
-          chatId: telegramChatId,
-        }),
+      const res = await postJson('/api/telegram/test', {
+        botToken: telegramToken.trim(),
+        chatId: telegramChatId.trim(),
       });
       const data = await res.json();
       if (data.success) {
@@ -310,12 +308,8 @@ export function DashboardView({
       targets,
       minJitter,
       maxJitter,
-      membershipNumber: user.membershipNumber,
-      password: '',
-      telegramBotToken: telegramToken,
-      telegramChatId: telegramChatId,
-      stopOnSuccess: true,
-      autoLogoutOnSuccess: true,
+      telegramBotToken: telegramToken.trim(),
+      telegramChatId: telegramChatId.trim(),
     };
 
     onStart(config);
@@ -362,13 +356,15 @@ export function DashboardView({
               </div>
               <div>
                 <div className="flex items-center space-x-2">
-                  <span className="font-bold text-lg">🎉 선택 열차 취소표 선점 성공!</span>
+                  <span className="font-bold text-lg">
+                    {reservedTicket.isMock ? '🧪 [테스트] 가상 선점 결과 (실제 예약 아님)' : '🎉 선택 열차 취소표 선점 성공!'}
+                  </span>
                   <span className="px-2 py-0.5 rounded bg-white/30 text-xs font-semibold">
                     {reservedTicket.trainType} {reservedTicket.trainNumber} ({reservedTicket.seatType})
                   </span>
                 </div>
                 <p className="text-emerald-100 text-sm mt-0.5">
-                  {reservedTicket.departureStation} ({reservedTicket.departureTime}) → {reservedTicket.arrivalStation} ({reservedTicket.arrivalTime}) | 좌석: {reservedTicket.seatInfo}
+                  {reservedTicket.departureStation} ({reservedTicket.departureTime}) → {reservedTicket.arrivalStation} ({reservedTicket.arrivalTime}) | 좌석: {reservedTicket.seatInfo ?? `${reservedTicket.seatType} (코레일톡에서 확인)`}
                 </p>
               </div>
             </div>
@@ -376,11 +372,15 @@ export function DashboardView({
             {/* Countdown Box */}
             <div className="flex items-center space-x-4 bg-black/30 px-4 py-2.5 rounded-xl border border-white/10 shrink-0">
               <div className="text-right">
-                <p className="text-[11px] text-emerald-200 font-semibold uppercase tracking-wider">10분 결제 마감</p>
-                <div className="flex items-center space-x-1 font-mono text-2xl font-black text-amber-300">
-                  <Clock className="w-5 h-5 text-amber-300 animate-spin" />
-                  <span>{formatCountdown(deadlineSeconds)}</span>
-                </div>
+                <p className="text-[11px] text-emerald-200 font-semibold uppercase tracking-wider">결제 마감</p>
+                {deadlineSeconds !== null ? (
+                  <div className="flex items-center space-x-1 font-mono text-2xl font-black text-amber-300">
+                    <Clock className="w-5 h-5 text-amber-300 animate-spin" />
+                    <span>{formatCountdown(deadlineSeconds)}</span>
+                  </div>
+                ) : (
+                  <div className="text-sm font-bold text-amber-300">코레일톡에서 확인 필요</div>
+                )}
               </div>
               <div className="h-8 w-px bg-white/20" />
               <button
@@ -401,7 +401,8 @@ export function DashboardView({
               <span><strong>공식 앱 결제 안내:</strong> 스마트폰 코레일톡 동시 접속 충돌을 방지하기 위해 백엔드 세션은 즉시 자동 로그아웃되었습니다. 지금 코레일톡 [장바구니]에서 결제하세요.</span>
             </span>
             <span className="bg-white/20 px-2.5 py-1 rounded text-white font-mono font-semibold">
-              예약번호: {reservedTicket.reservationNumber} | {reservedTicket.totalPrice.toLocaleString()}원
+              예약번호: {reservedTicket.reservationNumber ?? '확인 필요'}
+              {reservedTicket.totalPrice !== null && ` | ${reservedTicket.totalPrice.toLocaleString()}원`}
             </span>
           </div>
         </div>
@@ -897,7 +898,11 @@ export function DashboardView({
                 step="0.1"
                 disabled={isRunning}
                 value={minJitter}
-                onChange={(e) => setMinJitter(parseFloat(e.target.value))}
+                onChange={(e) => {
+                  const value = parseFloat(e.target.value);
+                  setMinJitter(value);
+                  setMaxJitter((prev) => Math.max(prev, value));
+                }}
                 className="w-full accent-blue-500"
               />
             </div>

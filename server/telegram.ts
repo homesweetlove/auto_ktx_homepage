@@ -1,3 +1,5 @@
+import type { ReservedTicket } from '../shared/types';
+
 export async function sendTelegramMessage(
   botToken: string,
   chatId: string,
@@ -28,26 +30,44 @@ export async function sendTelegramMessage(
   }
 }
 
-export function buildReservationAlertHtml(params: {
-  trainNumber: string;
-  trainType: string;
-  depStation: string;
-  arrStation: string;
-  depTime: string;
-  arrTime: string;
-  seatInfo: string;
-  price: number;
-  pnrNo: string;
-}): string {
-  return `🚨 <b>[KTX 취소표 자동 선점 성공!]</b> 🚨
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
-🚄 <b>열차</b>: ${params.trainType} ${params.trainNumber}호
-📍 <b>구간</b>: ${params.depStation} (${params.depTime}) ➔ ${params.arrStation} (${params.arrTime})
-💺 <b>좌석</b>: ${params.seatInfo}
-💳 <b>결제금액</b>: ${params.price.toLocaleString()}원
-🎫 <b>예약번호(PNR)</b>: <code>${params.pnrNo}</code>
+function formatKstDeadline(iso: string): string {
+  return new Date(iso).toLocaleTimeString('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
 
-⚠️ <b>[필독] 10분 이내 결제 필수!</b>
-지금 즉시 <b>공식 코레일톡 앱</b> 실행 ➔ [장바구니/승차권] 메뉴에서 결제를 완료해 주세요!
-(※ 세션 충돌 방지를 위해 백엔드는 즉각 로그아웃되었습니다)`;
+export function buildReservationAlertHtml(ticket: ReservedTicket): string {
+  const e = escapeHtml;
+  const title = ticket.isMock ? '[테스트] KTX 취소표 선점 시뮬레이션' : 'KTX 취소표 자동 선점 성공!';
+  const lines = [
+    `🚨 <b>${title}</b> 🚨`,
+    '',
+    `🚄 <b>열차</b>: ${e(ticket.trainType)} ${e(ticket.trainNumber)}호`,
+    `📍 <b>구간</b>: ${e(ticket.departureStation)} (${e(ticket.departureTime)}) ➔ ${e(ticket.arrivalStation)} (${e(ticket.arrivalTime)})`,
+    `💺 <b>좌석</b>: ${ticket.seatInfo ? e(ticket.seatInfo) : `${e(ticket.seatType)} (호차·좌석은 코레일톡에서 확인)`}`,
+  ];
+  if (ticket.totalPrice !== null) {
+    lines.push(`💳 <b>결제금액</b>: ${ticket.totalPrice.toLocaleString()}원`);
+  }
+  lines.push(
+    ticket.reservationNumber
+      ? `🎫 <b>예약번호(PNR)</b>: <code>${e(ticket.reservationNumber)}</code>`
+      : '🎫 <b>예약번호</b>: 응답에서 확인하지 못했습니다. 코레일톡에서 직접 확인하세요.'
+  );
+  lines.push('');
+  lines.push(
+    ticket.paymentDeadline
+      ? `⚠️ <b>[필독] ${formatKstDeadline(ticket.paymentDeadline)}까지 결제 필수!</b>`
+      : '⚠️ <b>[필독] 결제 기한을 코레일톡에서 확인하고 즉시 결제하세요!</b>'
+  );
+  lines.push('지금 즉시 <b>공식 코레일톡 앱</b> 실행 ➔ [장바구니/승차권] 메뉴에서 결제를 완료해 주세요!');
+  lines.push('(※ 세션 충돌 방지를 위해 백엔드는 즉각 로그아웃되었습니다)');
+  return lines.join('\n');
 }

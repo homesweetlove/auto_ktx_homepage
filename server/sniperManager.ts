@@ -1,52 +1,32 @@
 import { KorailService } from './korail';
 import { sendTelegramMessage, buildReservationAlertHtml } from './telegram';
+import type {
+  LogEntry,
+  ReservedTicket,
+  SniperStartRequest,
+  SniperStatus,
+  SniperStatusResponse,
+  TargetTrain,
+} from '../shared/types';
 
-export interface TargetTrainSpec {
-  trainNumber: string;
-  trainType: string;
-  departureTime: string;
-  arrivalTime: string;
-  seatPreference: 'NORMAL' | 'SPECIAL' | 'ANY';
-}
-
-export interface SniperConfigPayload {
-  departureStation: string;
-  arrivalStation: string;
-  date: string;
-  baseTime?: string;
-  passengers?: number;
-  targets: TargetTrainSpec[];
-  minJitter?: number;
-  maxJitter?: number;
-  membershipNumber?: string;
-  password?: string;
-  telegramBotToken?: string;
-  telegramChatId?: string;
-  isSimulationMode?: boolean;
-}
-
-export interface LogItem {
+export interface KorailCredentials {
   id: string;
-  timestamp: string;
-  level: 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR' | 'DEBUG';
-  tag: 'ENGINE' | 'KORAIL' | 'HTTP' | 'TELEGRAM' | 'SECURITY';
-  message: string;
-  latencyMs?: number;
+  password: string;
 }
 
 export class SniperManager {
   private isRunning = false;
-  private status: 'IDLE' | 'LOGGING_IN' | 'POLLING' | 'RESERVING' | 'SUCCESS' | 'STOPPED' | 'ERROR' = 'IDLE';
+  private status: SniperStatus = 'IDLE';
   private pollCount = 0;
   private lastLatencyMs = 0;
   private currentJitter = 1.65;
-  private logs: LogItem[] = [];
-  private activeConfig: SniperConfigPayload | null = null;
+  private logs: LogEntry[] = [];
+  private activeConfig: SniperStartRequest | null = null;
   private korailService: KorailService | null = null;
-  private reservedTicket: any = null;
+  private reservedTicket: ReservedTicket | null = null;
   private loopTimeout: NodeJS.Timeout | null = null;
 
-  public getStatus() {
+  public getStatus(): SniperStatusResponse {
     return {
       status: this.status,
       isRunning: this.isRunning,
@@ -59,14 +39,14 @@ export class SniperManager {
   }
 
   public addLog(
-    level: LogItem['level'],
-    tag: LogItem['tag'],
+    level: LogEntry['level'],
+    tag: LogEntry['tag'],
     message: string,
     latencyMs?: number
   ) {
     const now = new Date();
     const timeStr = `${now.toTimeString().split(' ')[0]}.${now.getMilliseconds().toString().padStart(3, '0')}`;
-    const item: LogItem = {
+    const item: LogEntry = {
       id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       timestamp: timeStr,
       level,
@@ -80,7 +60,10 @@ export class SniperManager {
     }
   }
 
-  public async start(config: SniperConfigPayload): Promise<{ success: boolean; message: string }> {
+  public async start(
+    config: SniperStartRequest,
+    credentials: KorailCredentials | null
+  ): Promise<{ success: boolean; message: string }> {
     await this.stop();
 
     this.activeConfig = config;
@@ -101,9 +84,9 @@ export class SniperManager {
     );
 
     // 1. 코레일 실제 로그인 (실제 모드 및 계정 제공 시)
-    if (!config.isSimulationMode && config.membershipNumber && config.password) {
-      this.addLog('INFO', 'SECURITY', `코레일 계정(${config.membershipNumber}) 실시간 세션 인증 요청 중...`);
-      const loginRes = await this.korailService.login(config.membershipNumber, config.password);
+    if (!config.isSimulationMode && credentials) {
+      this.addLog('INFO', 'SECURITY', '코레일 계정 실시간 세션 인증 요청 중...');
+      const loginRes = await this.korailService.login(credentials.id, credentials.password);
 
       if (!loginRes.success) {
         this.status = 'ERROR';
@@ -147,14 +130,14 @@ export class SniperManager {
     return { success: true, message: '스나이퍼가 정지되었습니다.' };
   }
 
-  public async triggerMockSuccess(targetTrain?: TargetTrainSpec) {
+  public async triggerMockSuccess(targetTrain?: TargetTrain): Promise<ReservedTicket> {
     if (this.loopTimeout) {
       clearTimeout(this.loopTimeout);
       this.loopTimeout = null;
     }
 
     const config = this.activeConfig;
-    const target = targetTrain || config?.targets[0] || {
+    const target: TargetTrain = targetTrain || config?.targets[0] || {
       trainNumber: '025',
       trainType: 'KTX',
       departureTime: '09:58',
@@ -165,9 +148,9 @@ export class SniperManager {
     const seatKr = target.seatPreference === 'SPECIAL' ? '특실' : '일반실';
     const now = new Date();
     const deadline = new Date(now.getTime() + 10 * 60 * 1000);
-    const pnrNo = `RES-${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}-${Math.floor(10000 + Math.random() * 90000)}`;
+    const pnrNo = `TEST-${Math.floor(10000 + Math.random() * 90000)}`;
 
-    const ticket = {
+    const ticket: ReservedTicket = {
       reservationNumber: pnrNo,
       trainNumber: target.trainNumber,
       trainType: target.trainType,
@@ -180,33 +163,34 @@ export class SniperManager {
       reservedAt: now.toISOString(),
       paymentDeadline: deadline.toISOString(),
       totalPrice: target.seatPreference === 'SPECIAL' ? 83700 : 59800,
+      verified: false,
+      isMock: true,
     };
 
     this.reservedTicket = ticket;
     this.status = 'SUCCESS';
     this.isRunning = false;
 
-    this.addLog('SUCCESS', 'KORAIL', `🚨 [취소표 발견] ${target.trainType} ${target.trainNumber}호 ${seatKr} 잔여석 포착!`, 95);
-    this.addLog('SUCCESS', 'ENGINE', `🎉 [선점 대성공] ${target.trainType} ${target.trainNumber}호 ${seatKr} 장바구니 담김 완료! (PNR: ${pnrNo})`);
+    this.addLog('WARN', 'ENGINE', `🧪 [테스트 트리거] ${target.trainType} ${target.trainNumber}호 ${seatKr} 가상 선점 결과 생성 (실제 예약 아님, PNR: ${pnrNo})`);
 
     if (config?.telegramBotToken && config?.telegramChatId) {
-      const msg = buildReservationAlertHtml({
-        trainNumber: target.trainNumber,
-        trainType: target.trainType,
-        depStation: ticket.departureStation,
-        arrStation: ticket.arrivalStation,
-        depTime: ticket.departureTime,
-        arrTime: ticket.arrivalTime,
-        seatInfo: ticket.seatInfo,
-        price: ticket.totalPrice,
-        pnrNo,
-      });
-      await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, msg);
-      this.addLog('SUCCESS', 'TELEGRAM', '📱 텔레그램 긴급 알림 푸시 발송 완료 (10분 결제 시한)');
+      await this.notifyTelegram(config, ticket);
     }
 
-    this.addLog('INFO', 'SECURITY', '🔒 [세션 충돌 방지] 공식 코레일톡 앱 접속을 위해 백엔드 세션 즉각 로그아웃.');
     return ticket;
+  }
+
+  private async notifyTelegram(config: SniperStartRequest, ticket: ReservedTicket) {
+    const result = await sendTelegramMessage(
+      config.telegramBotToken!,
+      config.telegramChatId!,
+      buildReservationAlertHtml(ticket)
+    );
+    if (result.success) {
+      this.addLog('SUCCESS', 'TELEGRAM', '📱 텔레그램 알림 발송 완료');
+    } else {
+      this.addLog('ERROR', 'TELEGRAM', `텔레그램 알림 발송 실패: ${result.message}`);
+    }
   }
 
   private scheduleNextPoll() {
@@ -254,12 +238,12 @@ export class SniperManager {
       const latency = Date.now() - t0;
       this.lastLatencyMs = latency;
 
-      const targetMap = new Map<string, TargetTrainSpec>();
+      const targetMap = new Map<string, TargetTrain>();
       for (const t of config.targets) {
         targetMap.set(t.trainNumber, t);
       }
 
-      let foundTarget: TargetTrainSpec | null = null;
+      let foundTarget: TargetTrain | null = null;
       let matchedTrainRaw: any = null;
       let matchedSeatPref: 'NORMAL' | 'SPECIAL' = 'NORMAL';
 
@@ -315,23 +299,21 @@ export class SniperManager {
         );
 
         if (reserveRes.success) {
-          const now = new Date();
-          const deadline = new Date(now.getTime() + 10 * 60 * 1000);
-          const pnr = reserveRes.pnrNo || `RES-${now.getFullYear()}${now.getMonth() + 1}-${Math.floor(Math.random() * 89999 + 10000)}`;
-
-          const ticket = {
-            reservationNumber: pnr,
+          const ticket: ReservedTicket = {
+            reservationNumber: reserveRes.pnrNo,
             trainNumber: foundTarget.trainNumber,
             trainType: foundTarget.trainType,
             departureStation: config.departureStation,
             arrivalStation: config.arrivalStation,
             departureTime: foundTarget.departureTime,
             arrivalTime: foundTarget.arrivalTime,
-            seatInfo: reserveRes.seatInfo || `${seatKr} 4호차 9A`,
+            seatInfo: reserveRes.seatInfo,
             seatType: seatKr,
-            reservedAt: now.toISOString(),
-            paymentDeadline: deadline.toISOString(),
-            totalPrice: reserveRes.price || 59800,
+            reservedAt: new Date().toISOString(),
+            paymentDeadline: reserveRes.paymentDeadline,
+            totalPrice: reserveRes.price,
+            verified: Boolean(reserveRes.pnrNo && reserveRes.paymentDeadline),
+            isMock: false,
           };
 
           this.reservedTicket = ticket;
@@ -341,23 +323,18 @@ export class SniperManager {
           this.addLog(
             'SUCCESS',
             'ENGINE',
-            `🎉 [선점 대성공] ${foundTarget.trainType} ${foundTarget.trainNumber}호 장바구니 담김 완료! (PNR: ${pnr})`
+            `🎉 [선점 성공] ${foundTarget.trainType} ${foundTarget.trainNumber}호 장바구니 담김 완료! (PNR: ${ticket.reservationNumber ?? '확인 필요'})`
           );
+          if (!ticket.verified) {
+            this.addLog(
+              'WARN',
+              'KORAIL',
+              '예약 응답에서 예약번호 또는 결제 기한을 확인하지 못했습니다. 코레일톡에서 예약 내역과 결제 기한을 직접 확인하세요.'
+            );
+          }
 
           if (config.telegramBotToken && config.telegramChatId) {
-            const msg = buildReservationAlertHtml({
-              trainNumber: foundTarget.trainNumber,
-              trainType: foundTarget.trainType,
-              depStation: config.departureStation,
-              arrStation: config.arrivalStation,
-              depTime: foundTarget.departureTime,
-              arrTime: foundTarget.arrivalTime,
-              seatInfo: ticket.seatInfo,
-              price: ticket.totalPrice,
-              pnrNo: pnr,
-            });
-            await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, msg);
-            this.addLog('SUCCESS', 'TELEGRAM', '📱 텔레그램 긴급 알림 푸시 발송 완료 (10분 결제 시한)');
+            await this.notifyTelegram(config, ticket);
           }
 
           // 세션 즉시 해제
